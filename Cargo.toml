@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/bagel_cli",
+  "crates/bagel_core",
+  "crates/bagel_exec",
+  "crates/bagel_utils"
+]
+
+[workspace.package]
+edition = "2024"
