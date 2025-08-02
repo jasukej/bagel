@@ -1,0 +1,8 @@
+[hello]
+cmd = "gcc -o hello hello.c"
+inputs = ["hello.c"]
+outputs = ["hello"]
+kind = "binary"
+
+[hello.env]
+CFLAGS = "-Wall -std=c99" 
