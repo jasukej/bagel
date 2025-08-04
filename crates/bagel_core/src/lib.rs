@@ -14,7 +14,7 @@ pub enum BuildSpecError {
     InvalidTarget(String),
 }
 
-/** Type of build target */
+/** Kind of build target */
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -32,21 +32,20 @@ pub struct TargetSpec {
     /** Shell command executed for this target */
     pub cmd: String,
 
-    /** Files (or globs) Bagel will hash for change detection */
+    /** Files (or globs) to hash for change detection */
     pub inputs: Vec<String>,
 
-    /** Files Bagel will treat as the artifact & cache key */
+    /** Files treated as the artifact & cache key */
     pub outputs: Vec<String>,
 
-    /** Other Bagel targets that must finish first */
+    /** Other targets that must finish first */
     #[serde(default)]
     pub deps: Vec<String>,
 
-    /** Declared environment variables */
     #[serde(default)]
     pub env: HashMap<String, String>,
 
-    /** Type of target (binary or lib) */
+    /** Kind of target (binary or lib) */
     #[serde(default)]
     pub kind: TargetKind,
 }
@@ -56,6 +55,24 @@ impl TargetSpec {
         if self.cmd.trim().is_empty() {
             return Err(BuildSpecError::InvalidTarget(format!(
                 "Target '{target_name}' has empty command"
+            )));
+        }
+
+        if self.inputs.iter().any(|s| s.trim().is_empty()) {
+            return Err(BuildSpecError::InvalidTarget(format!(
+                "Target '{target_name}' has empty input file"
+            )));
+        }
+
+        if self.outputs.iter().any(|s| s.trim().is_empty()) {
+            return Err(BuildSpecError::InvalidTarget(format!(
+                "Target '{target_name}' has empty output file"
+            )));
+        }
+
+        if self.deps.iter().any(|s| s.trim().is_empty()) {
+            return Err(BuildSpecError::InvalidTarget(format!(
+                "Target '{target_name}' has empty dependency name"
             )));
         }
 
@@ -105,7 +122,7 @@ impl BuildSpec {
     }
 
     /*
-     * Validate no circular dependencies. Current version only checks for non-existent dependencies.
+     * Validate no circular or non-existent deps.
      */
     fn validate_dependencies(&self) -> Result<(), BuildSpecError> {
         for (target_name, target) in &self.targets {
@@ -115,10 +132,62 @@ impl BuildSpec {
                         "Target '{target_name}' depends on non-existent target '{dep}'"
                     )));
                 }
+
+                if dep == target_name {
+                    return Err(BuildSpecError::InvalidTarget(format!(
+                        "Target '{target_name}' cannot depend on itself"
+                    )));
+                }
             }
         }
 
-        // TODO: add cycle detection
+        /** Run topological sort to detect any cycles */
+        #[derive(PartialEq)]
+        enum State {
+            Unvisited,
+            Visiting,
+            Visited,
+        }
+
+        let mut state: HashMap<&str, State> = self
+            .targets
+            .keys()
+            .map(|k| (k.as_str(), State::Unvisited))
+            .collect();
+
+        fn dfs<'a>(
+            curr: &'a str,
+            spec: &'a BuildSpec,
+            state: &mut HashMap<&'a str, State>,
+        ) -> Result<(), BuildSpecError> {
+            match state.get(curr) {
+                Some(State::Visiting) => {
+                    return Err(BuildSpecError::InvalidTarget(format!(
+                        "Circular dependency detected involving target '{curr}'"
+                    )));
+                }
+                Some(State::Visited) => return Ok(()),
+                _ => {}
+            }
+
+            state.insert(curr, State::Visiting);
+
+            if let Some(target) = spec.targets.get(curr) {
+                for dep in &target.deps {
+                    dfs(dep, spec, state)?;
+                }
+            }
+
+            state.insert(curr, State::Visited);
+            Ok(())
+        }
+
+        for target_name in self.targets.keys() {
+            if state.get((target_name).as_str()) == Some(&State::Unvisited) {
+                dfs(target_name, self, &mut state)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -192,5 +261,51 @@ mod tests {
             lib_target.env.get("CARGO_TARGET_DIR"),
             Some(&"custom_target".to_string())
         );
+    }
+
+    #[test]
+    fn test_invalid_target_no_required_params() {
+        let toml_content = r#"
+            [invalid_lib]
+            inputs = ["src/**/*.rs", "Cargo.toml"]
+            outputs = ["target/debug/libmy_library.rlib"]
+            deps = []
+            kind = "lib"
+
+            [invalid_lib.env]
+            RUSTFLAGS = "-C opt-level=2"
+        "#;
+
+        let spec_result = BuildSpec::from_toml(toml_content);
+        assert!(spec_result.is_err(), "cmd is required");
+    }
+
+    #[test]
+    fn test_invalid_target_circular_deps() {
+        let toml_content = r#"
+            [circular_lib]
+            cmd = "cargo build --lib"
+            inputs = ["src/**/*.rs", "Cargo.toml"]
+            outputs = ["target/debug/libmy_library.rlib"]
+            deps = ["a_dep"]
+
+            [a_dep]
+            cmd = "python generate_code.py"
+            inputs = ["templates/*.j2", "schema.yaml"]
+            outputs = ["src/compiled.ts"]
+            deps = ["b_dep"]
+
+            [b_dep]
+            cmd = "tsc src/*.ts" 
+            inputs = ["src/**/*.ts", "Cargo.toml"]
+            outputs = ["src/compiled.ts"]
+            deps = ["circular_lib"]
+        "#;
+
+        let spec_result = BuildSpec::from_toml(toml_content);
+        assert!(
+            spec_result.is_err(),
+            "Circular dependency should be detected"
+        )
     }
 }
