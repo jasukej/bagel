@@ -202,6 +202,63 @@ impl BuildSpec {
     pub fn has_target(&self, name: &str) -> bool {
         self.targets.contains_key(name)
     }
+
+    pub fn topological_sort(&self) -> Result<Vec<String>, BuildSpecError> {
+        #[derive(PartialEq, Clone, Copy)]
+        enum State {
+            Unvisited,
+            Visiting,
+            Visited,
+        }
+
+        let mut state: HashMap<&str, State> = self
+            .targets
+            .keys()
+            .map(|k| (k.as_str(), State::Unvisited))
+            .collect();
+
+        let mut result: Vec<String> = Vec::new();
+
+        // dfs; add nodes in post-order (after all dependencies are visited)
+        fn dfs<'a>(
+            curr: &'a str,
+            spec: &'a BuildSpec,
+            state: &mut HashMap<&'a str, State>,
+            result: &mut Vec<String>,
+        ) -> Result<(), BuildSpecError> {
+            match state.get(curr) {
+                Some(State::Visiting) => {
+                    return Err(BuildSpecError::InvalidTarget(format!(
+                        "Circular dependency detected involving target '{curr}'"
+                    )));
+                }
+                Some(State::Visited) => return Ok(()),
+                _ => {}
+            }
+
+            state.insert(curr, State::Visiting);
+
+            // Visit all dependencies first
+            if let Some(target) = spec.targets.get(curr) {
+                for dep in &target.deps {
+                    dfs(dep, spec, state, result)?;
+                }
+            }
+
+            state.insert(curr, State::Visited);
+            result.push(curr.to_string());
+
+            Ok(())
+        }
+
+        for target_name in self.targets.keys() {
+            if state.get(target_name.as_str()) == Some(&State::Unvisited) {
+                dfs(target_name, self, &mut state, &mut result)?;
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -307,5 +364,117 @@ mod tests {
             spec_result.is_err(),
             "Circular dependency should be detected"
         )
+    }
+
+    #[test]
+    fn test_topological_sort_simple() {
+        // Linear dependency chain: A -> B -> C
+        let toml_content = r#"
+            [A]
+            cmd = "echo A"
+            inputs = ["a.txt"]
+            outputs = ["a.out"]
+            deps = ["B"]
+
+            [B]
+            cmd = "echo B"
+            inputs = ["b.txt"]
+            outputs = ["b.out"]
+            deps = ["C"]
+
+            [C]
+            cmd = "echo C"
+            inputs = ["c.txt"]
+            outputs = ["c.out"]
+        "#;
+
+        let spec = BuildSpec::from_toml(toml_content).unwrap();
+        let order = spec.topological_sort().unwrap();
+
+        // C must come before B, B must come before A
+        let pos_c = order.iter().position(|x| x == "C").unwrap();
+        let pos_b = order.iter().position(|x| x == "B").unwrap();
+        let pos_a = order.iter().position(|x| x == "A").unwrap();
+
+        assert!(pos_c < pos_b, "C should come before B");
+        assert!(pos_b < pos_a, "B should come before A");
+    }
+
+    #[test]
+    fn test_topological_sort_diamond() {
+        // test a damond dependency:
+        //     A
+        //    / \
+        //   B   C
+        //    \ /
+        //     D
+        let toml_content = r#"
+            [A]
+            cmd = "echo A"
+            inputs = ["a.txt"]
+            outputs = ["a.out"]
+            deps = ["B", "C"]
+
+            [B]
+            cmd = "echo B"
+            inputs = ["b.txt"]
+            outputs = ["b.out"]
+            deps = ["D"]
+
+            [C]
+            cmd = "echo C"
+            inputs = ["c.txt"]
+            outputs = ["c.out"]
+            deps = ["D"]
+
+            [D]
+            cmd = "echo D"
+            inputs = ["d.txt"]
+            outputs = ["d.out"]
+        "#;
+
+        let spec = BuildSpec::from_toml(toml_content).unwrap();
+        let order = spec.topological_sort().unwrap();
+
+        // D must come first, B and C can be in any order, A must be last
+        let pos_d = order.iter().position(|x| x == "D").unwrap();
+        let pos_b = order.iter().position(|x| x == "B").unwrap();
+        let pos_c = order.iter().position(|x| x == "C").unwrap();
+        let pos_a = order.iter().position(|x| x == "A").unwrap();
+
+        assert_eq!(pos_d, 0, "D should be first (no deps)");
+        assert!(pos_b < pos_a, "B should come before A");
+        assert!(pos_c < pos_a, "C should come before A");
+        assert_eq!(pos_a, 3, "A should be last");
+    }
+
+    #[test]
+    fn test_topological_sort_independent() {
+        // No dependencies between targets
+        let toml_content = r#"
+            [A]
+            cmd = "echo A"
+            inputs = ["a.txt"]
+            outputs = ["a.out"]
+
+            [B]
+            cmd = "echo B"
+            inputs = ["b.txt"]
+            outputs = ["b.out"]
+
+            [C]
+            cmd = "echo C"
+            inputs = ["c.txt"]
+            outputs = ["c.out"]
+        "#;
+
+        let spec = BuildSpec::from_toml(toml_content).unwrap();
+        let order = spec.topological_sort().unwrap();
+
+        // All three targets should be in the result
+        assert_eq!(order.len(), 3);
+        assert!(order.contains(&"A".to_string()));
+        assert!(order.contains(&"B".to_string()));
+        assert!(order.contains(&"C".to_string()));
     }
 }
