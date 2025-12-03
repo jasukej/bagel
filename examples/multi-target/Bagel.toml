@@ -1,0 +1,35 @@
+# Example showing topological sort with multiple dependencies
+# Dependency graph:
+#     app
+#    /   \
+#  lib1  lib2
+#    \   /
+#    utils
+
+[app]
+cmd = "gcc -o app main.c lib1.o lib2.o utils.o"
+inputs = ["main.c", "lib1.o", "lib2.o", "utils.o"]
+outputs = ["app"]
+deps = ["lib1", "lib2"]
+kind = "binary"
+
+[lib1]
+cmd = "gcc -c lib1.c -o lib1.o"
+inputs = ["lib1.c", "utils.o"]
+outputs = ["lib1.o"]
+deps = ["utils"]
+kind = "lib"
+
+[lib2]
+cmd = "gcc -c lib2.c -o lib2.o"
+inputs = ["lib2.c", "utils.o"]
+outputs = ["lib2.o"]
+deps = ["utils"]
+kind = "lib"
+
+[utils]
+cmd = "gcc -c utils.c -o utils.o"
+inputs = ["utils.c"]
+outputs = ["utils.o"]
+kind = "lib"
+
