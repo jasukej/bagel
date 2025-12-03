@@ -1,0 +1,4 @@
+# See: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+too-many-lines-threshold = 150
+too-many-arguments-threshold = 8
