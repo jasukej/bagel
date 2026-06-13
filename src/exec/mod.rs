@@ -13,7 +13,7 @@ pub use types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bagel_core::BuildSpec;
+    use crate::core::BuildSpec;
     use std::path::PathBuf;
     use std::time::Duration;
 

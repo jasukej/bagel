@@ -1,6 +1,6 @@
-use crate::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
-use bagel_core::BuildSpec;
-use bagel_utils::{BuildCache, compute_target_hash, expand_globs};
+use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
+use crate::core::BuildSpec;
+use crate::utils::{BuildCache, compute_target_hash, expand_globs};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::process::{Command, Output, Stdio};
@@ -130,7 +130,7 @@ impl ParallelExecutor {
     fn execute_target(
         &self,
         name: &str,
-        target: &bagel_core::TargetSpec,
+        target: &crate::core::TargetSpec,
     ) -> Result<TargetResult, ExecError> {
         let start = Instant::now();
 

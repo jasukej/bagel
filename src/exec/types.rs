@@ -1,7 +1,7 @@
 //! Shared types for build execution
 
-use bagel_core::BuildSpecError;
-use bagel_utils::{CacheError, HashError};
+use crate::core::BuildSpecError;
+use crate::utils::{CacheError, HashError};
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
@@ -89,7 +89,7 @@ impl BuildReport {
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
     pub project_root: PathBuf, // project root directory (where Bagel.toml lives)
-    pub force_rebuild: bool,    // force rebuild all targets, ignoring cache
+    pub force_rebuild: bool,   // force rebuild all targets, ignoring cache
     pub continue_on_error: bool, // continue execution after a target fails to build
     pub verbose: bool,         // verbose output
     pub parallel: bool,        // execute in parallel

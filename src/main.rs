@@ -1,5 +1,5 @@
-use bagel_core::BuildSpec;
-use bagel_exec::{ExecConfig, ParallelExecutor, SerialExecutor, TargetStatus};
+use bagel::core::BuildSpec;
+use bagel::exec::{ExecConfig, ParallelExecutor, SerialExecutor, TargetStatus};
 use std::env;
 use std::path::Path;
 

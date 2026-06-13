@@ -1,4 +1,4 @@
-use bagel_core::{BuildSpec, BuildSpecError, TargetKind};
+use bagel::core::{BuildSpec, BuildSpecError, TargetKind};
 
 #[test]
 fn test_empty_toml_succeeds_with_no_targets() {

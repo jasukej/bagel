@@ -1,12 +1,14 @@
 //! Utility functions for the bagel build system
 
 pub mod cache;
+pub mod xxhash_ffi;
 
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use thiserror::Error;
+use xxhash_ffi::xxhash_file;
 
 pub use cache::{BuildCache, CacheEntry, CacheError, RebuildReason};
 
@@ -43,6 +45,11 @@ pub fn hash_file<P: AsRef<Path>>(path: P) -> Result<String, HashError> {
     }
 
     Ok(hex::encode(hasher.finalize()))
+}
+
+pub fn hash_fast<P: AsRef<Path>>(path: P) -> Result<u64, HashError> {
+    xxhash_file(path.as_ref())
+        .map_err(|e| HashError::IoError(path.as_ref().display().to_string(), e))
 }
 
 /**
