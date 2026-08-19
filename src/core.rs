@@ -203,6 +203,41 @@ impl BuildSpec {
         self.targets.contains_key(name)
     }
 
+    /**
+     * Render the dependency graph as Graphviz DOT source.
+     */
+    pub fn to_dot(&self) -> String {
+        let mut out = String::from("digraph bagel {\n    rankdir=BT;\n    node [shape=box, style=rounded];\n\n");
+
+        let mut names: Vec<&String> = self.targets.keys().collect();
+        names.sort();
+
+        for name in &names {
+            let target = &self.targets[*name];
+            let shape_label = match target.kind {
+                TargetKind::Binary => "binary",
+                TargetKind::Lib => "lib",
+            };
+            out.push_str(&format!(
+                "    \"{name}\" [label=\"{name}\\n({shape_label})\"];\n"
+            ));
+        }
+
+        out.push('\n');
+
+        for name in &names {
+            let target = &self.targets[*name];
+            let mut deps = target.deps.clone();
+            deps.sort();
+            for dep in deps {
+                out.push_str(&format!("    \"{name}\" -> \"{dep}\";\n"));
+            }
+        }
+
+        out.push_str("}\n");
+        out
+    }
+
     pub fn topological_sort(&self) -> Result<Vec<String>, BuildSpecError> {
         #[derive(PartialEq, Clone, Copy)]
         enum State {
@@ -476,5 +511,31 @@ mod tests {
         assert!(order.contains(&"A".to_string()));
         assert!(order.contains(&"B".to_string()));
         assert!(order.contains(&"C".to_string()));
+    }
+
+    #[test]
+    fn test_to_dot_contains_nodes_and_edges() {
+        let toml_content = r#"
+            [app]
+            cmd = "echo app"
+            inputs = ["a.txt"]
+            outputs = ["app.out"]
+            deps = ["lib"]
+            kind = "binary"
+
+            [lib]
+            cmd = "echo lib"
+            inputs = ["l.txt"]
+            outputs = ["lib.out"]
+            kind = "lib"
+        "#;
+
+        let spec = BuildSpec::from_toml(toml_content).unwrap();
+        let dot = spec.to_dot();
+
+        assert!(dot.starts_with("digraph bagel {"));
+        assert!(dot.contains("\"app\" -> \"lib\";"));
+        assert!(dot.contains("\"app\" [label=\"app\\n(binary)\"];"));
+        assert!(dot.contains("\"lib\" [label=\"lib\\n(lib)\"];"));
     }
 }
