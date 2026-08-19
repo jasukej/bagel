@@ -1,6 +1,7 @@
 //! Utility functions for the bagel build system
 
 pub mod cache;
+pub mod term;
 pub mod xxhash_ffi;
 
 use sha2::{Digest, Sha256};

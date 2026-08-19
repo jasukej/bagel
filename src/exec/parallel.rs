@@ -1,5 +1,6 @@
 use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 use crate::core::BuildSpec;
+use crate::utils::term::{BOLD, DIM, GREEN, RED, RESET};
 use crate::utils::{BuildCache, compute_target_hash, expand_globs};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -9,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /**
- * Parallel executor; builds independent targets concurrently using rayon
+ * Parallel executor; builds independent targets concurrently using rayon.
  */
 pub struct ParallelExecutor {
     config: ExecConfig,
@@ -54,11 +55,21 @@ impl ParallelExecutor {
         let completed: Arc<Mutex<Vec<&str>>> = Arc::new(Mutex::new(Vec::new()));
 
         let mut current_wave = ready;
+        let mut wave_num = 0usize;
 
         while !current_wave.is_empty() {
             if has_error.load(Ordering::Relaxed) && !self.config.continue_on_error {
                 break;
             }
+
+            wave_num += 1;
+            let mut sorted_wave = current_wave.clone();
+            sorted_wave.sort_unstable();
+            println!(
+                "\n{BOLD}Wave {wave_num}{RESET} — {} target(s) in parallel: {}",
+                sorted_wave.len(),
+                sorted_wave.join(", ")
+            );
 
             let wave_results: Vec<TargetResult> = current_wave
                 .par_iter()
@@ -68,7 +79,7 @@ impl ParallelExecutor {
                     }
 
                     let target = spec.get_target(target_name)?;
-                    let result = self.execute_target(target_name, target);
+                    let result = self.execute_target(target_name, target, start);
 
                     match result {
                         Ok(r) => {
@@ -83,6 +94,7 @@ impl ParallelExecutor {
                             Some(TargetResult {
                                 target_name: target_name.to_string(),
                                 status: TargetStatus::Failed(-1),
+                                start_offset: start.elapsed(),
                                 duration: std::time::Duration::ZERO,
                                 output: None,
                             })
@@ -97,6 +109,30 @@ impl ParallelExecutor {
                 for result in &wave_results {
                     comp.push(Box::leak(result.target_name.clone().into_boxed_str()));
                     res.push(result.clone());
+
+                    if let Some(output) = &result.output
+                        && !output.is_empty()
+                    {
+                        println!("  {DIM}[{}] {}{RESET}", result.target_name, output.trim());
+                    }
+                    match &result.status {
+                        TargetStatus::Built => println!(
+                            "  {GREEN}✓ {} completed in {:.2}s{RESET}",
+                            result.target_name,
+                            result.duration.as_secs_f64()
+                        ),
+                        TargetStatus::Skipped => {
+                            println!("  {DIM}○ {} (up to date){RESET}", result.target_name)
+                        }
+                        TargetStatus::Failed(code) => println!(
+                            "  {RED}✗ {} failed with exit code {}{RESET}",
+                            result.target_name, code
+                        ),
+                        TargetStatus::Signaled => println!(
+                            "  {RED}✗ {} was terminated by signal{RESET}",
+                            result.target_name
+                        ),
+                    }
                 }
             }
 
@@ -131,8 +167,10 @@ impl ParallelExecutor {
         &self,
         name: &str,
         target: &crate::core::TargetSpec,
+        build_start: Instant,
     ) -> Result<TargetResult, ExecError> {
         let start = Instant::now();
+        let start_offset = start.duration_since(build_start);
 
         // Designate each parallel worker its own cache handle
         let mut cache = BuildCache::new(&self.config.project_root);
@@ -147,6 +185,7 @@ impl ParallelExecutor {
             return Ok(TargetResult {
                 target_name: name.to_string(),
                 status: TargetStatus::Skipped,
+                start_offset,
                 duration: start.elapsed(),
                 output: None,
             });
@@ -176,6 +215,7 @@ impl ParallelExecutor {
         Ok(TargetResult {
             target_name: name.to_string(),
             status: result_status,
+            start_offset,
             duration,
             output: if combined_output.is_empty() {
                 None
@@ -206,7 +246,6 @@ impl ParallelExecutor {
             command.env(key, value);
         }
 
-        // We choose to capture output instead of inheriting to prevent interleaving
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 

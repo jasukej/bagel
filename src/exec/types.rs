@@ -1,7 +1,8 @@
 //! Shared types for build execution
 
-use crate::core::BuildSpecError;
+use crate::core::{BuildSpec, BuildSpecError};
 use crate::utils::{CacheError, HashError};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
@@ -38,6 +39,9 @@ pub enum ExecError {
 pub struct TargetResult {
     pub target_name: String,
     pub status: TargetStatus,
+    /// Offset from the start of the overall build at which this target began executing.
+    /// Overlapping offsets/durations across targets are what make parallelism visible.
+    pub start_offset: Duration,
     pub duration: Duration,
     pub output: Option<String>,
 }
@@ -83,6 +87,67 @@ impl BuildReport {
     pub fn success(&self) -> bool {
         self.failed_count() == 0
     }
+
+    /**
+     * Render the report as JSON, supplemented with each target's declared 
+     * dependencies so that it can be rendered as a DAG.
+     */
+    pub fn to_json(&self, spec: &BuildSpec) -> JsonReport {
+        let targets = self
+            .results
+            .iter()
+            .map(|r| {
+                let deps = spec
+                    .get_target(&r.target_name)
+                    .map(|t| t.deps.clone())
+                    .unwrap_or_default();
+
+                let (status, exit_code) = match &r.status {
+                    TargetStatus::Built => ("built", None),
+                    TargetStatus::Skipped => ("skipped", None),
+                    TargetStatus::Failed(code) => ("failed", Some(*code)),
+                    TargetStatus::Signaled => ("signaled", None),
+                };
+
+                JsonTargetResult {
+                    name: r.target_name.clone(),
+                    status: status.to_string(),
+                    exit_code,
+                    start_ms: r.start_offset.as_secs_f64() * 1000.0,
+                    duration_ms: r.duration.as_secs_f64() * 1000.0,
+                    deps,
+                }
+            })
+            .collect();
+
+        JsonReport {
+            total_duration_ms: self.total_duration.as_secs_f64() * 1000.0,
+            built: self.built_count(),
+            skipped: self.skipped_count(),
+            failed: self.failed_count(),
+            targets,
+        }
+    }
+}
+
+/// JSON-serializable view of a [`BuildReport`] for visualization.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonReport {
+    pub total_duration_ms: f64,
+    pub built: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub targets: Vec<JsonTargetResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonTargetResult {
+    pub name: String,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub start_ms: f64,
+    pub duration_ms: f64,
+    pub deps: Vec<String>,
 }
 
 /// Configuration for build execution

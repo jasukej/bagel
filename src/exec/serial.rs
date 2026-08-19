@@ -1,5 +1,6 @@
 use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 use crate::core::{BuildSpec, TargetSpec};
+use crate::utils::term::{CYAN, DIM, GREEN, RED, RESET};
 use crate::utils::{BuildCache, compute_target_hash, expand_globs};
 use std::collections::HashMap;
 use std::process::{Command, ExitStatus, Stdio};
@@ -32,7 +33,7 @@ impl SerialExecutor {
                 .get_target(target_name)
                 .ok_or_else(|| ExecError::TargetNotFound(target_name.clone()))?;
 
-            let result = self.execute_target(target_name, target)?;
+            let result = self.execute_target(target_name, target, start)?;
 
             let failed = matches!(
                 result.status,
@@ -58,8 +59,10 @@ impl SerialExecutor {
         &mut self,
         name: &str,
         target: &TargetSpec,
+        build_start: Instant,
     ) -> Result<TargetResult, ExecError> {
         let start = Instant::now();
+        let start_offset = start.duration_since(build_start);
 
         let input_files = expand_globs(&target.inputs, &self.config.project_root)?;
         let curr_hash = compute_target_hash(&input_files, &target.cmd, &target.env)?;
@@ -68,18 +71,17 @@ impl SerialExecutor {
             self.config.force_rebuild || self.cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
 
         if !needs_rebuild {
-            if self.config.verbose {
-                println!("Skipping {} (up to date)", name);
-            }
+            println!("{DIM}○ {} (up to date){RESET}", name);
             return Ok(TargetResult {
                 target_name: name.to_string(),
                 status: TargetStatus::Skipped,
+                start_offset,
                 duration: start.elapsed(),
                 output: None,
             });
         }
 
-        println!("Building {}...", name);
+        println!("{CYAN}→ Building {}...{RESET}", name);
         if self.config.verbose {
             println!("   cmd: {}", target.cmd);
         }
@@ -99,13 +101,17 @@ impl SerialExecutor {
 
         match &result_status {
             TargetStatus::Built => {
-                println!("    {} completed in {:.2}s", name, duration.as_secs_f64());
+                println!(
+                    "{GREEN}✓ {} completed in {:.2}s{RESET}",
+                    name,
+                    duration.as_secs_f64()
+                );
             }
             TargetStatus::Failed(code) => {
-                eprintln!("    {} failed with exit code {}", name, code);
+                eprintln!("{RED}✗ {} failed with exit code {}{RESET}", name, code);
             }
             TargetStatus::Signaled => {
-                eprintln!("    {} was terminated by signal", name);
+                eprintln!("{RED}✗ {} was terminated by signal{RESET}", name);
             }
             TargetStatus::Skipped => unreachable!(),
         }
@@ -113,6 +119,7 @@ impl SerialExecutor {
         Ok(TargetResult {
             target_name: name.to_string(),
             status: result_status,
+            start_offset,
             duration,
             output: None,
         })

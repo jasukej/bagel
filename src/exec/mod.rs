@@ -8,7 +8,9 @@ mod types;
 
 pub use parallel::ParallelExecutor;
 pub use serial::SerialExecutor;
-pub use types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
+pub use types::{
+    BuildReport, ExecConfig, ExecError, JsonReport, JsonTargetResult, TargetResult, TargetStatus,
+};
 
 #[cfg(test)]
 mod tests {
@@ -31,18 +33,21 @@ mod tests {
                 TargetResult {
                     target_name: "a".to_string(),
                     status: TargetStatus::Built,
+                    start_offset: Duration::ZERO,
                     duration: Duration::from_secs(1),
                     output: None,
                 },
                 TargetResult {
                     target_name: "b".to_string(),
                     status: TargetStatus::Skipped,
+                    start_offset: Duration::from_secs(1),
                     duration: Duration::from_millis(10),
                     output: None,
                 },
                 TargetResult {
                     target_name: "c".to_string(),
                     status: TargetStatus::Failed(1),
+                    start_offset: Duration::from_secs(1),
                     duration: Duration::from_secs(2),
                     output: None,
                 },
