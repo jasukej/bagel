@@ -1,0 +1,64 @@
+# Demonstrates why parallel scheduling matters: the "service_*" targets are
+# independent of each other and only share a common dependency on "base", so
+# a parallel build runs them concurrently instead of one after another.
+# Each command sleeps to stand in for a slow compile/link step so the
+# difference between `bagel build` and `bagel build -j` is easy to see.
+#
+# Dependency graph:
+#             release
+#            /       \
+#      bundle_ab   bundle_cd
+#       /    \       /    \
+#  service_a service_b service_c service_d
+#       \      \       /      /
+#              base
+#
+# Serial critical path:   1 + 2+2+2+2 + 1+1 + 1  = 12s
+# Parallel critical path: 1 +   2     +  1   + 1  =  5s
+
+[base]
+cmd = "sleep 1 && touch base.o"
+inputs = ["base.c"]
+outputs = ["base.o"]
+
+[service_a]
+cmd = "sleep 2 && touch service_a.o"
+inputs = ["service_a.c"]
+outputs = ["service_a.o"]
+deps = ["base"]
+
+[service_b]
+cmd = "sleep 2 && touch service_b.o"
+inputs = ["service_b.c"]
+outputs = ["service_b.o"]
+deps = ["base"]
+
+[service_c]
+cmd = "sleep 2 && touch service_c.o"
+inputs = ["service_c.c"]
+outputs = ["service_c.o"]
+deps = ["base"]
+
+[service_d]
+cmd = "sleep 2 && touch service_d.o"
+inputs = ["service_d.c"]
+outputs = ["service_d.o"]
+deps = ["base"]
+
+[bundle_ab]
+cmd = "sleep 1 && touch bundle_ab.o"
+inputs = ["bundle_ab.c"]
+outputs = ["bundle_ab.o"]
+deps = ["service_a", "service_b"]
+
+[bundle_cd]
+cmd = "sleep 1 && touch bundle_cd.o"
+inputs = ["bundle_cd.c"]
+outputs = ["bundle_cd.o"]
+deps = ["service_c", "service_d"]
+
+[release]
+cmd = "sleep 1 && touch release"
+inputs = ["release.c"]
+outputs = ["release"]
+deps = ["bundle_ab", "bundle_cd"]

@@ -1,3 +1,8 @@
 target/
 .DS_store
 **/.bagel/cache
+
+# generated build outputs from running the examples
+examples/**/*.o
+examples/multi-target/app
+examples/demo/release
