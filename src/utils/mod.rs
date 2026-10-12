@@ -9,9 +9,15 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use thiserror::Error;
+
+#[cfg(has_xxhash)]
 use xxhash_ffi::xxhash_file;
 
 pub use cache::{BuildCache, CacheEntry, CacheError, RebuildReason};
+
+// This project (unusually) experiments with multiple hashing backends. We dispatch to 
+// either based on a build-time flag (of whether the target library is present).
+pub const HASH_BACKEND: &str = if cfg!(has_xxhash) { "xxh64" } else { "sha256-64" };
 
 #[derive(Error, Debug)]
 pub enum HashError {
@@ -24,10 +30,9 @@ pub enum HashError {
 }
 
 /**
- * Hash a single file and return hex-encoded sha-256
+ * Stream a file through SHA-256 and return the raw digest.
  */
-pub fn hash_file<P: AsRef<Path>>(path: P) -> Result<String, HashError> {
-    let path = path.as_ref();
+pub fn sha256_file(path: &Path) -> Result<Vec<u8>, HashError>{
     let file = File::open(path).map_err(|e| HashError::IoError(path.display().to_string(), e))?;
 
     // Use a buffered reader to be efficient for large files
@@ -45,12 +50,33 @@ pub fn hash_file<P: AsRef<Path>>(path: P) -> Result<String, HashError> {
         hasher.update(&buffer[..bytes_read]);
     }
 
-    Ok(hex::encode(hasher.finalize()))
+    Ok(hasher.finalize().to_vec())
 }
 
+/**
+ * Hash a single file and return the hex-encoded output.
+ */
+pub fn hash_file<P: AsRef<Path>>(path: P) -> Result<String, HashError> {
+    Ok(hex::encode(sha256_file(path.as_ref())?))
+}
+
+/**
+ * Hash a file's contents to a u64 using xxHash
+ */
+#[cfg(has_xxhash)]
 pub fn hash_fast<P: AsRef<Path>>(path: P) -> Result<u64, HashError> {
     xxhash_file(path.as_ref())
         .map_err(|e| HashError::IoError(path.as_ref().display().to_string(), e))
+}
+
+/**
+ * Return the first 8 bytes of the file's SHA-256. This is the unoptimized fallback
+ * when xxHash is not present on the system.
+ */
+#[cfg(not(has_xxhash))]
+pub fn hash_fast<P: AsRef<Path>>(path: P) -> Result<u64, HashError> {
+    let digest = sha256_file(path.as_ref())?;
+    Ok(u64::from_le_bytes(digest[..8].try_into().expect("sha-256 digest is 32 bytes")))
 }
 
 /**
@@ -125,6 +151,8 @@ pub fn compute_target_hash(
     env: &std::collections::HashMap<String, String>,
 ) -> Result<String, HashError> {
     let mut hasher = Sha256::new();
+    hasher.update(HASH_BACKEND.as_bytes());
+    hasher.update(b"\n");
 
     for path in input_files {
         let file_hash = hash_fast(path)?;

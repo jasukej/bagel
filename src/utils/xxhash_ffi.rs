@@ -13,3 +13,11 @@ pub fn xxhash_file(path: &std::path::Path) -> std::io::Result<u64> {
     let data = std::fs::read(path)?;
     Ok(xxhash64(&data))
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn xxh64_known_vector() {
+        assert_eq!(super::xxhash64(b""), 0xEF46DB3751D8E999);
+    }
+}
