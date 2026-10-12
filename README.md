@@ -40,6 +40,33 @@ cargo run -- build
 cargo test
 ```
 
+### Dependencies
+**Required**
+- **Rust 1.85+**: We use the 2024 edition.
+
+**Optional**
+- **[xxHash](https://github.com/Cyan4973/xxHash) 0.8+** and **pkg-config**: Bagel links against the system xxHash library for fast file hashing. Otherwise, falls back to SHA-256, which is (slightly) slower on large source files.
+- **[Graphviz](https://graphviz.org/)**: needed to render the output of `bagel graph` into an image.
+
+```bash
+# macOS
+brew install xxhash pkg-config graphviz
+
+# Debian/Ubuntu
+sudo apt install libxxhash-dev pkg-config graphviz
+```
+
+If you install any dependencies after the initial build, re-run with `cargo clean -p bagel`.
+
+**Crates**
+- **`rayon`**: thread pool to enable parallel execution
+- **`sha2`**, **`hex`**: SHA-256 hashing for cache keys (and the fallback file hash)
+- **`glob`**: to expand input patterns in `Bagel.toml`
+- **`serde`**, **`toml`**, **`serde_json`**: parse `Bagel.toml` and write out JSON/error reports
+- **`thiserror`**: error types
+- **`pkg-config`**: find system libraries e.g. xxHash at build time
+
+
 ## Installing
 If you're going to run `bagel` more than once or twice, you may want to install it onto your PATH:
 

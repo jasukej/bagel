@@ -1,7 +1,13 @@
-//! Cargo build script for compiling native C dependencies
+//! Link against the system xxHash library, or fall back on 
+//! otherwise, fall back to SHA-256.
 fn main() {
-    cc::Build::new().file("vendor/xxhash/xxhash.c").opt_level(3).compile("xxhash");
+    println!("cargo::rustc-check-cfg=cfg(has_xxhash)");
 
-    println!("cargo:rerun-if-changed=vendor/xxhash/xxhash.c");
-    println!("cargo:rerun-if-changed=vendor/xxhash/xxhash.h");
+    match pkg_config::Config::new().atleast_version("0.8").probe("libxxhash") {
+        // probe() has already printed the link-lib lines
+        Ok(_) => println!("cargo::rustc-cfg=has_xxhash"),
+        Err(_) => println!(
+            "cargo::warning=libxxhash not found, falling back to SHA-256 for file hashing"
+        ),
+    }
 }
