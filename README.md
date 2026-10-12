@@ -1,4 +1,4 @@
-Bagel is a lightweight, parallelizable build system written in Rust and C++ that:
+Bagel is a lightweight, parallelizable build system written in Rust that:
 
 - Builds a dependency DAG and schedules commands to run in topological order
 - Allows incremental builds by skipping up-to-date targets with hashing
