@@ -127,10 +127,10 @@ pub fn compute_target_hash(
     let mut hasher = Sha256::new();
 
     for path in input_files {
-        let file_hash = hash_file(path)?;
+        let file_hash = hash_fast(path)?;
         hasher.update(path.to_string_lossy().as_bytes());
         hasher.update(b":");
-        hasher.update(file_hash.as_bytes());
+        hasher.update(&file_hash.to_le_bytes());
         hasher.update(b"\n");
     }
 

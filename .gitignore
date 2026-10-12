@@ -6,3 +6,7 @@ target/
 examples/**/*.o
 examples/multi-target/app
 examples/demo/release
+examples/demo/*.json
+examples/demo/graph.dot
+examples/demo/graph.png
+examples/demo/.service_c.c.orig
