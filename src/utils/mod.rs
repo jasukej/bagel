@@ -15,9 +15,13 @@ use xxhash_ffi::xxhash_file;
 
 pub use cache::{BuildCache, CacheEntry, CacheError, RebuildReason};
 
-// This project (unusually) experiments with multiple hashing backends. We dispatch to 
+// This project (unusually) experiments with multiple hashing backends. We dispatch to
 // either based on a build-time flag (of whether the target library is present).
-pub const HASH_BACKEND: &str = if cfg!(has_xxhash) { "xxh64" } else { "sha256-64" };
+pub const HASH_BACKEND: &str = if cfg!(has_xxhash) {
+    "xxh64"
+} else {
+    "sha256-64"
+};
 
 #[derive(Error, Debug)]
 pub enum HashError {
@@ -32,7 +36,7 @@ pub enum HashError {
 /**
  * Stream a file through SHA-256 and return the raw digest.
  */
-pub fn sha256_file(path: &Path) -> Result<Vec<u8>, HashError>{
+pub fn sha256_file(path: &Path) -> Result<Vec<u8>, HashError> {
     let file = File::open(path).map_err(|e| HashError::IoError(path.display().to_string(), e))?;
 
     // Use a buffered reader to be efficient for large files
@@ -76,7 +80,9 @@ pub fn hash_fast<P: AsRef<Path>>(path: P) -> Result<u64, HashError> {
 #[cfg(not(has_xxhash))]
 pub fn hash_fast<P: AsRef<Path>>(path: P) -> Result<u64, HashError> {
     let digest = sha256_file(path.as_ref())?;
-    Ok(u64::from_le_bytes(digest[..8].try_into().expect("sha-256 digest is 32 bytes")))
+    Ok(u64::from_le_bytes(
+        digest[..8].try_into().expect("sha-256 digest is 32 bytes"),
+    ))
 }
 
 /**
@@ -130,6 +136,16 @@ pub fn expand_globs(
 
     files.sort();
     Ok(files)
+}
+
+/**
+ * Return the first declared output that does not exist under `base_dir`, if any
+ */
+pub fn find_missing_output(outputs: &[String], base_dir: &Path) -> Option<std::path::PathBuf> {
+    outputs
+        .iter()
+        .map(|output| base_dir.join(output))
+        .find(|path| !path.exists())
 }
 
 /**

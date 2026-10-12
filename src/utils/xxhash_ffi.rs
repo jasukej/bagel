@@ -4,7 +4,7 @@ unsafe extern "C" {
 }
 
 pub fn xxhash64(data: &[u8]) -> u64 {
-    unsafe { XXH64(data.as_ptr(), data.len(), 0) } 
+    unsafe { XXH64(data.as_ptr(), data.len(), 0) }
 }
 
 // TODO(opt): Right now we read the whole file into memory. This can be optimized
