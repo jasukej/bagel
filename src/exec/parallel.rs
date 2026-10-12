@@ -1,16 +1,16 @@
 use crate::core::BuildSpec;
+use crate::exec::target::execute_target;
 use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
+use crate::utils::BuildCache;
 use crate::utils::term::{BOLD, DIM, GREEN, RED, RESET};
-use crate::utils::{BuildCache, compute_target_hash, expand_globs, find_missing_output};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /**
- * Parallel executor; builds independent targets concurrently using rayon.
+ * Parallel executor that builds independent targets with rayon.
  */
 pub struct ParallelExecutor {
     config: ExecConfig,
@@ -23,11 +23,11 @@ impl ParallelExecutor {
 
     /**
      * Execute all targets in the build spec, running independent targets in parallel.
+     * This is largely just a topological sort implementation.
      */
     pub fn execute_all(&mut self, spec: &BuildSpec) -> Result<BuildReport, ExecError> {
         let start = Instant::now();
 
-        // Reverse dependency map: target -> list of targets that depend on it
         let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut remaining_deps: HashMap<&str, AtomicUsize> = HashMap::new();
 
@@ -41,7 +41,6 @@ impl ParallelExecutor {
             }
         }
 
-        // Populate with no-dependency targets, which can be executed immediately
         let ready: Vec<&str> = spec
             .targets
             .iter()
@@ -49,7 +48,6 @@ impl ParallelExecutor {
             .map(|(name, _)| name.as_str())
             .collect();
 
-        // Shared state
         let results: Arc<Mutex<Vec<TargetResult>>> = Arc::new(Mutex::new(Vec::new()));
         let has_error = Arc::new(AtomicBool::new(false));
         let completed: Arc<Mutex<Vec<&str>>> = Arc::new(Mutex::new(Vec::new()));
@@ -79,7 +77,10 @@ impl ParallelExecutor {
                     }
 
                     let target = spec.get_target(target_name)?;
-                    let result = self.execute_target(target_name, target, start);
+                    // Each worker gets its own cache handle; entries are separate files
+                    let mut cache = BuildCache::new(&self.config.project_root);
+                    let result =
+                        execute_target(target_name, target, start, &self.config, &mut cache, true);
 
                     match result {
                         Ok(r) => {
@@ -110,30 +111,7 @@ impl ParallelExecutor {
                 for result in &wave_results {
                     comp.push(Box::leak(result.target_name.clone().into_boxed_str()));
                     res.push(result.clone());
-
-                    if let Some(output) = &result.output
-                        && !output.is_empty()
-                    {
-                        println!("  {DIM}[{}] {}{RESET}", result.target_name, output.trim());
-                    }
-                    match &result.status {
-                        TargetStatus::Built => println!(
-                            "  {GREEN}✓ {} completed in {:.2}s{RESET}",
-                            result.target_name,
-                            result.duration.as_secs_f64()
-                        ),
-                        TargetStatus::Skipped => {
-                            println!("  {DIM}○ {} (up to date){RESET}", result.target_name)
-                        }
-                        TargetStatus::Failed(code) => println!(
-                            "  {RED}✗ {} failed with exit code {}{RESET}",
-                            result.target_name, code
-                        ),
-                        TargetStatus::Signaled => println!(
-                            "  {RED}✗ {} was terminated by signal{RESET}",
-                            result.target_name
-                        ),
-                    }
+                    print_result(result);
                 }
             }
 
@@ -163,100 +141,25 @@ impl ParallelExecutor {
             total_duration: start.elapsed(),
         })
     }
+}
 
-    fn execute_target(
-        &self,
-        name: &str,
-        target: &crate::core::TargetSpec,
-        build_start: Instant,
-    ) -> Result<TargetResult, ExecError> {
-        let start = Instant::now();
-        let start_offset = start.duration_since(build_start);
-
-        // Designate each parallel worker its own cache handle
-        let mut cache = BuildCache::new(&self.config.project_root);
-
-        let input_files = expand_globs(&target.inputs, &self.config.project_root)?;
-        let curr_hash = compute_target_hash(&input_files, &target.cmd, &target.env)?;
-
-        let needs_rebuild = self.config.force_rebuild
-            || find_missing_output(&target.outputs, &self.config.project_root).is_some()
-            || cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
-
-        if !needs_rebuild {
-            return Ok(TargetResult {
-                target_name: name.to_string(),
-                status: TargetStatus::Skipped,
-                start_offset,
-                duration: start.elapsed(),
-                output: None,
-            });
-        }
-
-        let output = self.run_command_captured(&target.cmd, &target.env)?;
-
-        let result_status = if output.status.success() {
-            // Don't cache a target that "succeeded" without producing its outputs
-            if let Some(path) = find_missing_output(&target.outputs, &self.config.project_root) {
-                return Err(ExecError::MissingOutput(name.to_string(), path));
-            }
-            cache.record_build(name, curr_hash);
-            cache.flush_target(name)?;
-            TargetStatus::Built
-        } else if let Some(code) = output.status.code() {
-            TargetStatus::Failed(code)
-        } else {
-            TargetStatus::Signaled
-        };
-
-        let duration = start.elapsed();
-
-        // Combine stdout and stderr
-        let combined_output = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        Ok(TargetResult {
-            target_name: name.to_string(),
-            status: result_status,
-            start_offset,
-            duration,
-            output: if combined_output.is_empty() {
-                None
-            } else {
-                Some(combined_output)
-            },
-        })
+/**
+ * Print a finished target's captured output followed by a one-line summary.
+ */
+fn print_result(result: &TargetResult) {
+    let name = &result.target_name;
+    if let Some(output) = &result.output {
+        println!("  {DIM}[{name}] {}{RESET}", output.trim());
     }
-
-    fn run_command_captured(
-        &self,
-        cmd: &str,
-        env: &HashMap<String, String>,
-    ) -> Result<Output, ExecError> {
-        let mut command = if cfg!(target_os = "windows") {
-            let mut c = Command::new("cmd");
-            c.args(["/C", cmd]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", cmd]);
-            c
-        };
-
-        command.current_dir(&self.config.project_root);
-
-        for (key, value) in env {
-            command.env(key, value);
+    match result.status {
+        TargetStatus::Built => println!(
+            "  {GREEN}✓ {name} completed in {:.2}s{RESET}",
+            result.duration.as_secs_f64()
+        ),
+        TargetStatus::Skipped => println!("  {DIM}○ {name} (up to date){RESET}"),
+        TargetStatus::Failed(code) => {
+            println!("  {RED}✗ {name} failed with exit code {code}{RESET}")
         }
-
-        command.stdout(Stdio::piped());
-        command.stderr(Stdio::piped());
-
-        command
-            .output()
-            .map_err(|e| ExecError::CommandError(cmd.to_string(), e))
+        TargetStatus::Signaled => println!("  {RED}✗ {name} was terminated by signal{RESET}"),
     }
 }

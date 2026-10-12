@@ -1,13 +1,12 @@
-use crate::core::{BuildSpec, TargetSpec};
+use crate::core::BuildSpec;
+use crate::exec::target::execute_target;
 use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
-use crate::utils::term::{CYAN, DIM, GREEN, RED, RESET};
-use crate::utils::{BuildCache, compute_target_hash, expand_globs, find_missing_output};
-use std::collections::HashMap;
-use std::process::{Command, ExitStatus, Stdio};
+use crate::utils::BuildCache;
+use crate::utils::term::{DIM, GREEN, RED, RESET};
 use std::time::Instant;
 
 /**
- * Serial executor; builds targets sequentially in topological order.
+ * Serial executor that builds targets sequentially in topological order.
  */
 pub struct SerialExecutor {
     config: ExecConfig,
@@ -33,7 +32,15 @@ impl SerialExecutor {
                 .get_target(target_name)
                 .ok_or_else(|| ExecError::TargetNotFound(target_name.clone()))?;
 
-            let result = self.execute_target(target_name, target, start)?;
+            let result = execute_target(
+                target_name,
+                target,
+                start,
+                &self.config,
+                &mut self.cache,
+                false,
+            )?;
+            self.print_result(&result, &target.cmd);
 
             let failed = matches!(
                 result.status,
@@ -53,109 +60,24 @@ impl SerialExecutor {
     }
 
     /**
-     * Execute a single target, assuming its dependencies have been built.
+     * Print a one-line summary of a finished target. The command's own output
+     * has already streamed to the terminal.
      */
-    fn execute_target(
-        &mut self,
-        name: &str,
-        target: &TargetSpec,
-        build_start: Instant,
-    ) -> Result<TargetResult, ExecError> {
-        let start = Instant::now();
-        let start_offset = start.duration_since(build_start);
-
-        let input_files = expand_globs(&target.inputs, &self.config.project_root)?;
-        let curr_hash = compute_target_hash(&input_files, &target.cmd, &target.env)?;
-
-        let needs_rebuild = self.config.force_rebuild
-            || find_missing_output(&target.outputs, &self.config.project_root).is_some()
-            || self.cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
-
-        if !needs_rebuild {
-            println!("{DIM}○ {} (up to date){RESET}", name);
-            return Ok(TargetResult {
-                target_name: name.to_string(),
-                status: TargetStatus::Skipped,
-                start_offset,
-                duration: start.elapsed(),
-                output: None,
-            });
+    fn print_result(&self, result: &TargetResult, cmd: &str) {
+        let name = &result.target_name;
+        if self.config.verbose && result.status != TargetStatus::Skipped {
+            println!("   cmd: {cmd}");
         }
-
-        println!("{CYAN}→ Building {}...{RESET}", name);
-        if self.config.verbose {
-            println!("   cmd: {}", target.cmd);
-        }
-
-        let status = self.run_command(&target.cmd, &target.env)?;
-        let result_status = if status.success() {
-            // Shouldn't cache a target that succeeded without producing outputs
-            if let Some(path) = find_missing_output(&target.outputs, &self.config.project_root) {
-                return Err(ExecError::MissingOutput(name.to_string(), path));
-            }
-            self.cache.record_build(name, curr_hash);
-            self.cache.flush_target(name)?;
-            TargetStatus::Built
-        } else if let Some(code) = status.code() {
-            TargetStatus::Failed(code)
-        } else {
-            TargetStatus::Signaled
-        };
-
-        let duration = start.elapsed();
-
-        match &result_status {
-            TargetStatus::Built => {
-                println!(
-                    "{GREEN}✓ {} completed in {:.2}s{RESET}",
-                    name,
-                    duration.as_secs_f64()
-                );
-            }
+        match result.status {
+            TargetStatus::Built => println!(
+                "{GREEN}✓ {name} completed in {:.2}s{RESET}",
+                result.duration.as_secs_f64()
+            ),
+            TargetStatus::Skipped => println!("{DIM}○ {name} (up to date){RESET}"),
             TargetStatus::Failed(code) => {
-                eprintln!("{RED}✗ {} failed with exit code {}{RESET}", name, code);
+                eprintln!("{RED}✗ {name} failed with exit code {code}{RESET}")
             }
-            TargetStatus::Signaled => {
-                eprintln!("{RED}✗ {} was terminated by signal{RESET}", name);
-            }
-            TargetStatus::Skipped => unreachable!(),
+            TargetStatus::Signaled => eprintln!("{RED}✗ {name} was terminated by signal{RESET}"),
         }
-
-        Ok(TargetResult {
-            target_name: name.to_string(),
-            status: result_status,
-            start_offset,
-            duration,
-            output: None,
-        })
-    }
-
-    fn run_command(
-        &self,
-        cmd: &str,
-        env: &HashMap<String, String>,
-    ) -> Result<ExitStatus, ExecError> {
-        let mut command = if cfg!(target_os = "windows") {
-            let mut c = Command::new("cmd");
-            c.args(["/C", cmd]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", cmd]);
-            c
-        };
-
-        command.current_dir(&self.config.project_root);
-
-        for (key, value) in env {
-            command.env(key, value);
-        }
-
-        command.stdout(Stdio::inherit());
-        command.stderr(Stdio::inherit());
-
-        command
-            .status()
-            .map_err(|e| ExecError::CommandError(cmd.to_string(), e))
     }
 }
