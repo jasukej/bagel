@@ -30,6 +30,9 @@ pub enum ExecError {
     #[error("Failed to execute command for '{0}': {1}")]
     CommandError(String, std::io::Error),
 
+    #[error("Target '{0}' did not produce declared output '{}'", .1.display())]
+    MissingOutput(String, PathBuf),
+
     #[error("Target '{0}' was not found in build spec")]
     TargetNotFound(String),
 }

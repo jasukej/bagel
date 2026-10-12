@@ -174,7 +174,7 @@ pub fn compute_target_hash(
         let file_hash = hash_fast(path)?;
         hasher.update(path.to_string_lossy().as_bytes());
         hasher.update(b":");
-        hasher.update(&file_hash.to_le_bytes());
+        hasher.update(file_hash.to_le_bytes());
         hasher.update(b"\n");
     }
 

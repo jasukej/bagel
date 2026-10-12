@@ -1,7 +1,7 @@
-use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 use crate::core::{BuildSpec, TargetSpec};
+use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 use crate::utils::term::{CYAN, DIM, GREEN, RED, RESET};
-use crate::utils::{BuildCache, compute_target_hash, expand_globs};
+use crate::utils::{BuildCache, compute_target_hash, expand_globs, find_missing_output};
 use std::collections::HashMap;
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Instant;
@@ -53,7 +53,7 @@ impl SerialExecutor {
     }
 
     /**
-     * Execute a single target. Assumes its dependencies have been built.
+     * Execute a single target, assuming its dependencies have been built.
      */
     fn execute_target(
         &mut self,
@@ -67,8 +67,9 @@ impl SerialExecutor {
         let input_files = expand_globs(&target.inputs, &self.config.project_root)?;
         let curr_hash = compute_target_hash(&input_files, &target.cmd, &target.env)?;
 
-        let needs_rebuild =
-            self.config.force_rebuild || self.cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
+        let needs_rebuild = self.config.force_rebuild
+            || find_missing_output(&target.outputs, &self.config.project_root).is_some()
+            || self.cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
 
         if !needs_rebuild {
             println!("{DIM}○ {} (up to date){RESET}", name);
@@ -88,6 +89,10 @@ impl SerialExecutor {
 
         let status = self.run_command(&target.cmd, &target.env)?;
         let result_status = if status.success() {
+            // Shouldn't cache a target that succeeded without producing outputs
+            if let Some(path) = find_missing_output(&target.outputs, &self.config.project_root) {
+                return Err(ExecError::MissingOutput(name.to_string(), path));
+            }
             self.cache.record_build(name, curr_hash);
             self.cache.flush_target(name)?;
             TargetStatus::Built

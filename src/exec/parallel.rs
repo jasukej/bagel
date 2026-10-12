@@ -1,7 +1,7 @@
-use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 use crate::core::BuildSpec;
+use crate::exec::types::{BuildReport, ExecConfig, ExecError, TargetResult, TargetStatus};
 use crate::utils::term::{BOLD, DIM, GREEN, RED, RESET};
-use crate::utils::{BuildCache, compute_target_hash, expand_globs};
+use crate::utils::{BuildCache, compute_target_hash, expand_globs, find_missing_output};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::process::{Command, Output, Stdio};
@@ -89,7 +89,8 @@ impl ParallelExecutor {
                             }
                             Some(r)
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            eprintln!("  {RED}✗ {target_name}: {e}{RESET}");
                             has_error.store(true, Ordering::Relaxed);
                             Some(TargetResult {
                                 target_name: target_name.to_string(),
@@ -178,8 +179,9 @@ impl ParallelExecutor {
         let input_files = expand_globs(&target.inputs, &self.config.project_root)?;
         let curr_hash = compute_target_hash(&input_files, &target.cmd, &target.env)?;
 
-        let needs_rebuild =
-            self.config.force_rebuild || cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
+        let needs_rebuild = self.config.force_rebuild
+            || find_missing_output(&target.outputs, &self.config.project_root).is_some()
+            || cache.needs_rebuild(name, &curr_hash).unwrap_or(true);
 
         if !needs_rebuild {
             return Ok(TargetResult {
@@ -194,6 +196,10 @@ impl ParallelExecutor {
         let output = self.run_command_captured(&target.cmd, &target.env)?;
 
         let result_status = if output.status.success() {
+            // Don't cache a target that "succeeded" without producing its outputs
+            if let Some(path) = find_missing_output(&target.outputs, &self.config.project_root) {
+                return Err(ExecError::MissingOutput(name.to_string(), path));
+            }
             cache.record_build(name, curr_hash);
             cache.flush_target(name)?;
             TargetStatus::Built

@@ -67,7 +67,7 @@ mod tests {
 
         let toml = r#"
             [hello]
-            cmd = "echo 'Hello, World!'"
+            cmd = "echo 'Hello, World!' > output.txt"
             inputs = ["input.txt"]
             outputs = ["output.txt"]
         "#;
@@ -92,7 +92,7 @@ mod tests {
 
         let toml = r#"
             [hello]
-            cmd = "echo 'Hello'"
+            cmd = "echo 'Hello' > output.txt"
             inputs = ["input.txt"]
             outputs = ["output.txt"]
         "#;
@@ -127,7 +127,7 @@ mod tests {
 
         let toml = r#"
             [hello]
-            cmd = "echo 'Hello'"
+            cmd = "echo 'Hello' > output.txt"
             inputs = ["input.txt"]
             outputs = ["output.txt"]
         "#;
@@ -154,25 +154,25 @@ mod tests {
         // Diamond: A depends on B and C, both depend on D
         let toml = r#"
             [A]
-            cmd = "echo 'A'"
+            cmd = "echo 'A' > a.out"
             inputs = ["input.txt"]
             outputs = ["a.out"]
             deps = ["B", "C"]
 
             [B]
-            cmd = "echo 'B'"
+            cmd = "echo 'B' > b.out"
             inputs = ["input.txt"]
             outputs = ["b.out"]
             deps = ["D"]
 
             [C]
-            cmd = "echo 'C'"
+            cmd = "echo 'C' > c.out"
             inputs = ["input.txt"]
             outputs = ["c.out"]
             deps = ["D"]
 
             [D]
-            cmd = "echo 'D'"
+            cmd = "echo 'D' > d.out"
             inputs = ["input.txt"]
             outputs = ["d.out"]
         "#;
@@ -205,6 +205,97 @@ mod tests {
         assert!(pos_d < pos_c, "D should be built before C");
         assert!(pos_b < pos_a, "B should be built before A");
         assert!(pos_c < pos_a, "C should be built before A");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_serial_rebuilds_deleted_output() {
+        let dir = temp_dir("serial_deleted_output");
+
+        let toml = r#"
+            [hello]
+            cmd = "echo 'Hello' > output.txt"
+            inputs = ["input.txt"]
+            outputs = ["output.txt"]
+        "#;
+
+        std::fs::write(dir.join("input.txt"), "test").unwrap();
+
+        let spec = BuildSpec::from_toml(toml).unwrap();
+        let config = ExecConfig::new(&dir);
+
+        SerialExecutor::new(config.clone())
+            .unwrap()
+            .execute_all(&spec)
+            .unwrap();
+        std::fs::remove_file(dir.join("output.txt")).unwrap();
+
+        let report = SerialExecutor::new(config)
+            .unwrap()
+            .execute_all(&spec)
+            .unwrap();
+        assert_eq!(report.built_count(), 1);
+        assert!(dir.join("output.txt").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_parallel_rebuilds_deleted_output() {
+        let dir = temp_dir("parallel_deleted_output");
+
+        let toml = r#"
+            [hello]
+            cmd = "echo 'Hello' > output.txt"
+            inputs = ["input.txt"]
+            outputs = ["output.txt"]
+        "#;
+
+        std::fs::write(dir.join("input.txt"), "test").unwrap();
+
+        let spec = BuildSpec::from_toml(toml).unwrap();
+        let mut config = ExecConfig::new(&dir);
+        config.parallel = true;
+
+        ParallelExecutor::new(config.clone())
+            .unwrap()
+            .execute_all(&spec)
+            .unwrap();
+        std::fs::remove_file(dir.join("output.txt")).unwrap();
+
+        let report = ParallelExecutor::new(config)
+            .unwrap()
+            .execute_all(&spec)
+            .unwrap();
+        assert_eq!(report.built_count(), 1);
+        assert!(dir.join("output.txt").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_serial_errors_when_output_not_produced() {
+        // Test the case where the command succeeds but never writes its declared output
+        let dir = temp_dir("serial_output_not_produced");
+
+        let toml = r#"
+            [hello]
+            cmd = "true"
+            inputs = ["input.txt"]
+            outputs = ["output.txt"]
+        "#;
+
+        std::fs::write(dir.join("input.txt"), "test").unwrap();
+
+        let spec = BuildSpec::from_toml(toml).unwrap();
+        let config = ExecConfig::new(&dir);
+
+        let result = SerialExecutor::new(config).unwrap().execute_all(&spec);
+        assert!(matches!(
+            result,
+            Err(ExecError::MissingOutput(ref target, _)) if target == "hello"
+        ));
 
         std::fs::remove_dir_all(&dir).ok();
     }
